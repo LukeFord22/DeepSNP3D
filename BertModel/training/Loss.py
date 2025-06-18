@@ -235,6 +235,14 @@ def compute_sparse_losses(outputs, batch, device, config):
             spatial_reg=0.15
         ).to(device)
     
+    # FIXED: Move entire sparse_data to device once
+    sparse_data_on_device = {}
+    for key, value in sparse_data.items():
+        if isinstance(value, torch.Tensor) and value.numel() > 0:
+            sparse_data_on_device[key] = value.to(device)
+        else:
+            sparse_data_on_device[key] = value
+    
     # Process each feature with BATCHED processing
     feature_mappings = [
         ('rna', 'rna_data', 'token_rna'),
@@ -252,22 +260,15 @@ def compute_sparse_losses(outputs, batch, device, config):
         if output_key in outputs:
             try:
                 # Check if we have data for this feature
-                has_data = (data_key in sparse_data and 
-                           len(sparse_data[data_key]) > 0 and 
-                           sparse_data[data_key].numel() > 0)
+                has_data = (data_key in sparse_data_on_device and 
+                           isinstance(sparse_data_on_device[data_key], torch.Tensor) and
+                           sparse_data_on_device[data_key].numel() > 0)
                 
                 if has_data:
-                    # FIXED: Move sparse data to correct device
-                    sparse_data_device = sparse_data[data_key].to(device)
-                    
-                    # Create a temporary copy of sparse_data with correct device
-                    sparse_data_corrected = sparse_data.copy()
-                    sparse_data_corrected[data_key] = sparse_data_device
-                    
                     # Compute loss for this feature
                     loss_value = loss_functions[feature_name](
                         outputs[output_key], 
-                        sparse_data_corrected, 
+                        sparse_data_on_device,  # Pass the device-corrected dict
                         data_key,
                         max_token_length
                     )
@@ -918,6 +919,15 @@ class BatchedUltraEfficientSpatialLoss(nn.Module):
         
         # Additional safety check
         if feature_data.numel() == 0 or feature_data.shape[0] == 0:
+            return torch.tensor(0.0, device=predictions.device, requires_grad=True)
+        
+        # Ensure data is on correct device and has correct format
+        if feature_data.device != predictions.device:
+            feature_data = feature_data.to(predictions.device)
+        
+        # Ensure we have the right format [N, 3]
+        if feature_data.shape[1] != 3:
+            print(f"Warning: {feature_key} has shape {feature_data.shape}, expected [N, 3]")
             return torch.tensor(0.0, device=predictions.device, requires_grad=True)
         
         # === BATCHED PROCESSING ===

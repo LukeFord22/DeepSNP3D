@@ -100,18 +100,21 @@ def train_model(config=None):
         
         # Create subset dataset for this epoch
         epoch_dataset = torch.utils.data.Subset(multi_dataset, epoch_indices)
-        
+
         # Create DataLoader with curriculum sampler (NO shuffle!)
         train_loader = DataLoader(
             epoch_dataset,
             batch_size=config.training.batch_size,
             sampler=epoch_sampler, 
             shuffle=False,         
-            pin_memory=True,
+            pin_memory=False,
             collate_fn=collate_fn,
-            num_workers=0,  # Keep 0 for DeepSpeed compatibility
-            drop_last=True
+            num_workers=0,
+            drop_last=True,
+            persistent_workers=False,
+            prefetch_factor=2
         )
+
         
         # Debug curriculum progress
         if local_rank <= 0:

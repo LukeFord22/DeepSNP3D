@@ -79,6 +79,8 @@ def train_process(rank, world_size):
         (model_engine, optimizer, scheduler, train_loader, test_loader, 
          device, local_rank, dna_tokenizer, multi_dataset, curriculum_sampler, 
          world_size_from_setup, rank_from_setup) = setup_training(config)
+         
+        print(f"[Rank {rank}] Training setup complete.")
 
         # Update config runtime references
         config.deepspeed_runtime = {

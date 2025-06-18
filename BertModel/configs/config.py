@@ -7,7 +7,7 @@ from datetime import datetime
 @dataclass
 class TrainingConfig:
     """Training configuration parameters."""
-    batch_size: int = 48
+    batch_size: int = 32
     num_epochs: int = 10
     learning_rate: float = 3e-5
     grad_accum_steps: int = 2
@@ -64,12 +64,11 @@ class DataConfig:
 @dataclass
 class DeepSpeedConfig:
     """DeepSpeed configuration parameters."""
-    enabled: bool = True
     zero_stage: int = 2
-    fp16_enabled: bool = True
+    fp16_enabled: bool = False
     offload_optimizer: bool = True
     gradient_clipping: float = 5.0
-    steps_per_print: int = 100
+
 
 @dataclass
 class Config:

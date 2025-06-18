@@ -143,7 +143,7 @@ def setup_training(config):
 
     # Create DeepSpeed configuration
     ds_config = create_deepspeed_config(
-        training_config=config.training,
+        config=config,
         world_size=world_size
     )
     
