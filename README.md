@@ -39,7 +39,7 @@ DeepSNP leverages the state-of-the-art DNABERT-2 model (117M parameters) for mul
 1. Clone the repository:
    ```bash
    git clone <repository-url>
-   cd DeepSNP
+   cd DeepSNP3D
    ```
 
 2. Install dependencies:
