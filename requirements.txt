@@ -1,0 +1,13 @@
+torch 
+deepspeed
+transformers
+wandb
+matplotlib
+numpy
+tqdm
+scikit-learn
+pandas
+datasets
+accelerate
+
+
