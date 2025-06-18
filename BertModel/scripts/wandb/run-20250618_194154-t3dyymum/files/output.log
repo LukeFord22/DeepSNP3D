@@ -1,0 +1,115 @@
+Training Model with DeepSpeed...
+
+🎯 Epoch 0 Curriculum Status:
+   Expected ratio: 0.500
+   Actual ratio: 0.500
+   Samples: 3,093 pos, 3,093 neg
+   Total batches: 193
+Epoch 1/10:   0%|                                                                                                                                                           | 0/193 [00:00<?, ?it/s]
+
+[Rank 0] ❌ Exception during training:
+[Rank 0] Error: at 114:14:
+        else:
+            if EVEN_HEADDIM:
+                k = tl.load(k_ptrs + start_n * stride_kn,
+                            mask=(start_n + offs_n)[:, None] < seqlen_k,
+                            other=0.0)
+            else:
+                k = tl.load(k_ptrs + start_n * stride_kn,
+                            mask=((start_n + offs_n)[:, None] < seqlen_k) &
+                            (offs_d[None, :] < headdim),
+                            other=0.0)
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        qk += tl.dot(q, k, trans_b=True)
+              ^
+[Rank 0] Full traceback:
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/triton/language/core.py", line 34, in wrapper
+    return fn(*args, **kwargs)
+TypeError: dot() got an unexpected keyword argument 'trans_b'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/DeepSNP3D/BertModel/scripts/launch_training.py", line 104, in train_process
+    train_model(config)
+  File "/workspace/DeepSNP3D/BertModel/training/train.py", line 147, in train_model
+    outputs = model_engine(batch['input_ids'].to(device), batch['attention_mask'].to(device))
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/runtime/engine.py", line 2087, in forward
+    loss = self.module(*inputs, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1857, in _call_impl
+    return inner()
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1805, in inner
+    result = forward_call(*args, **kwargs)
+  File "/workspace/DeepSNP3D/BertModel/model/Model.py", line 202, in forward
+    outputs = self.base(input_ids=input_ids, attention_mask=attention_mask)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/bert_layers.py", line 609, in forward
+    encoder_outputs = self.encoder(
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/bert_layers.py", line 447, in forward
+    hidden_states = layer_module(hidden_states,
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/bert_layers.py", line 328, in forward
+    attention_output = self.attention(hidden_states, cu_seqlens, seqlen,
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/bert_layers.py", line 241, in forward
+    self_output = self.self(input_tensor, cu_seqlens, max_s, indices,
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/bert_layers.py", line 182, in forward
+    attention = flash_attn_qkvpacked_func(qkv, bias)
+  File "/usr/local/lib/python3.10/dist-packages/torch/autograd/function.py", line 575, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/flash_attn_triton.py", line 1010, in forward
+    o, lse, ctx.softmax_scale = _flash_attn_forward(
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/flash_attn_triton.py", line 815, in _flash_attn_forward
+    _fwd_kernel[grid](  # type: ignore
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/jit.py", line 347, in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/autotuner.py", line 209, in run
+    ret = self.fn.run(
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/autotuner.py", line 395, in run
+    return self.fn.run(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/jit.py", line 569, in run
+    kernel = self.compile(src, target=target, options=options.__dict__)
+  File "/usr/local/lib/python3.10/dist-packages/triton/compiler/compiler.py", line 278, in compile
+    module = src.make_ir(options, codegen_fns, module_map, context)
+  File "/usr/local/lib/python3.10/dist-packages/triton/compiler/compiler.py", line 81, in make_ir
+    return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,
+triton.compiler.errors.CompilationError: at 114:14:
+        else:
+            if EVEN_HEADDIM:
+                k = tl.load(k_ptrs + start_n * stride_kn,
+                            mask=(start_n + offs_n)[:, None] < seqlen_k,
+                            other=0.0)
+            else:
+                k = tl.load(k_ptrs + start_n * stride_kn,
+                            mask=((start_n + offs_n)[:, None] < seqlen_k) &
+                            (offs_d[None, :] < headdim),
+                            other=0.0)
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        qk += tl.dot(q, k, trans_b=True)
+              ^

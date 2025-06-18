@@ -1,0 +1,16 @@
+{"time":"2025-06-18T19:41:54.671631318Z","level":"INFO","msg":"stream: starting","core version":"0.20.1","symlink path":"/workspace/DeepSNP3D/BertModel/scripts/wandb/run-20250618_194154-t3dyymum/logs/debug-core.log"}
+{"time":"2025-06-18T19:41:54.911824567Z","level":"INFO","msg":"stream: created new stream","id":"t3dyymum"}
+{"time":"2025-06-18T19:41:54.912434046Z","level":"INFO","msg":"stream: started","id":"t3dyymum"}
+{"time":"2025-06-18T19:41:54.912525788Z","level":"INFO","msg":"writer: Do: started","stream_id":"t3dyymum"}
+{"time":"2025-06-18T19:41:54.912561814Z","level":"INFO","msg":"sender: started","stream_id":"t3dyymum"}
+{"time":"2025-06-18T19:41:54.912549028Z","level":"INFO","msg":"handler: started","stream_id":"t3dyymum"}
+{"time":"2025-06-18T19:41:55.289297304Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-06-18T19:41:56.194770415Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-06-18T19:41:56.195472621Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-06-18T19:41:56.551961585Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-06-18T19:41:56.71890307Z","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2025-06-18T19:41:56.724136538Z","level":"INFO","msg":"stream: closing","id":"t3dyymum"}
+{"time":"2025-06-18T19:41:56.724429357Z","level":"INFO","msg":"handler: closed","stream_id":"t3dyymum"}
+{"time":"2025-06-18T19:41:56.724466584Z","level":"INFO","msg":"writer: Close: closed","stream_id":"t3dyymum"}
+{"time":"2025-06-18T19:41:56.724486184Z","level":"INFO","msg":"sender: closed","stream_id":"t3dyymum"}
+{"time":"2025-06-18T19:41:56.729740509Z","level":"INFO","msg":"stream: closed","id":"t3dyymum"}

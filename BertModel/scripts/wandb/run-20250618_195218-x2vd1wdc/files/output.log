@@ -1,0 +1,52 @@
+Training Model with DeepSpeed...
+
+🎯 Epoch 0 Curriculum Status:
+   Expected ratio: 0.500
+   Actual ratio: 0.500
+   Samples: 3,093 pos, 3,093 neg
+   Total batches: 193
+Epoch 1/10:   1%|▏                                        | 1/193 [00:01<04:21,  1.36s/it, token_snp=2.087, token_conf=0.606, dna_snp=1.596, dna_conf=0.302, PrecT=0.002, PrecD=0.556, ETA=01:09:36]
+
+[Rank 0] ❌ Exception during training:
+[Rank 0] Error: out of resource: shared memory, Required: 114944, Hardware limit: 101376. Reducing block sizes or `num_stages` may help.
+[Rank 0] Full traceback:
+Traceback (most recent call last):
+  File "/workspace/DeepSNP3D/BertModel/scripts/launch_training.py", line 104, in train_process
+    train_model(config)
+  File "/workspace/DeepSNP3D/BertModel/training/train.py", line 316, in train_model
+    model_engine.backward(loss)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/utils/nvtx.py", line 20, in wrapped_fn
+    ret_val = func(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/runtime/engine.py", line 2249, in backward
+    self._do_optimizer_backward(loss, retain_graph)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/runtime/engine.py", line 2195, in _do_optimizer_backward
+    self.optimizer.backward(loss, retain_graph=retain_graph)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/runtime/zero/stage_1_and_2.py", line 2104, in backward
+    self.loss_scaler.backward(loss.float(), retain_graph=retain_graph)
+  File "/usr/local/lib/python3.10/dist-packages/deepspeed/runtime/fp16/loss_scaler.py", line 65, in backward
+    scaled_loss.backward(retain_graph=retain_graph)
+  File "/usr/local/lib/python3.10/dist-packages/torch/_tensor.py", line 648, in backward
+    torch.autograd.backward(
+  File "/usr/local/lib/python3.10/dist-packages/torch/autograd/__init__.py", line 353, in backward
+    _engine_run_backward(
+  File "/usr/local/lib/python3.10/dist-packages/torch/autograd/graph.py", line 824, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+  File "/usr/local/lib/python3.10/dist-packages/torch/autograd/function.py", line 307, in apply
+    return user_fn(self, *args)
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/flash_attn_triton.py", line 1029, in backward
+    _flash_attn_backward(do,
+  File "/root/.cache/huggingface/modules/transformers_modules/DNABERT-2-117M/flash_attn_triton.py", line 937, in _flash_attn_backward
+    _bwd_kernel[grid](  # type: ignore
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/jit.py", line 347, in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/autotuner.py", line 209, in run
+    ret = self.fn.run(
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/autotuner.py", line 395, in run
+    return self.fn.run(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/triton/runtime/jit.py", line 591, in run
+    kernel.run(grid_0, grid_1, grid_2, stream, kernel.function, kernel.packed_metadata,
+  File "/usr/local/lib/python3.10/dist-packages/triton/compiler/compiler.py", line 413, in __getattribute__
+    self._init_handles()
+  File "/usr/local/lib/python3.10/dist-packages/triton/compiler/compiler.py", line 401, in _init_handles
+    raise OutOfResources(self.metadata.shared, max_shared, "shared memory")
+triton.runtime.errors.OutOfResources: out of resource: shared memory, Required: 114944, Hardware limit: 101376. Reducing block sizes or `num_stages` may help.

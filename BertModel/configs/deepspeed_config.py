@@ -26,10 +26,11 @@ def create_deepspeed_config(config, world_size=1):
         },
         
         "scheduler": {
-            "type": "WarmupDecayLR",
+            "type": "WarmupLR",
             "params": {
                 "warmup_min_lr": 0,
                 "warmup_max_lr": config.training.learning_rate,
+                "warmup_num_steps": 100,
             }
         },
 

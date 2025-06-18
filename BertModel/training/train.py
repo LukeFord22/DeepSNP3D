@@ -107,12 +107,10 @@ def train_model(config=None):
             batch_size=config.training.batch_size,
             sampler=epoch_sampler, 
             shuffle=False,         
-            pin_memory=False,
+            pin_memory=True,
             collate_fn=collate_fn,
-            num_workers=0,
-            drop_last=True,
-            persistent_workers=False,
-            prefetch_factor=2
+            num_workers=0,  # Keep 0 for DeepSpeed compatibility
+            drop_last=True
         )
 
         
