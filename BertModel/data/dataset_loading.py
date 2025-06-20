@@ -1,9 +1,7 @@
-
-import pandas as pd
-import ast
 import torch
 import numpy as np
-
+from transformers import AutoTokenizer
+import os
 
 
 #=======================================================================================================
@@ -403,8 +401,20 @@ def collate_fn(batch):
         else:
             combined_sparse[key] = torch.empty((0, 3), dtype=torch.float)
     
-    # Apply padding mask
-    padding_mask = (attention_mask == 0)
+    local_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+        "model", "DNABERT-2-117M"
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True)
+    CLS_ID = tokenizer.cls_token_id
+    SEP_ID = tokenizer.sep_token_id
+
+    # Mask for special tokens
+    special_token_mask = (input_ids == CLS_ID) | (input_ids == SEP_ID)
+
+    # Apply padding and special token mask
+    padding_mask = (attention_mask == 0) | special_token_mask
     snp_labels[padding_mask] = -100
     cons_labels[padding_mask] = -100.0
     

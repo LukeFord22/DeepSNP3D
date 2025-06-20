@@ -123,9 +123,13 @@ def setup_training(config):
         if local_rank <= 0:
             print(f"🔄 Model weights not found locally. Downloading from {hf_model_name}...")
         download_model_weights(hf_model_name, local_path, local_rank)
+        if world_size > 1:
+            torch.distributed.barrier()
     else:
         if local_rank <= 0:
             print(f"✅ Model weights found locally at {local_path}")
+        if world_size > 1:
+            torch.distributed.barrier()
 
     # Load tokenizer and model configuration
     dna_tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True)
