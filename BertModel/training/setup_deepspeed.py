@@ -114,7 +114,8 @@ def setup_training(config):
         if local_rank <= 0:
             print(f"🔄 Model weights not found locally. Downloading from {hf_model_name}...")
             download_model_weights(hf_model_name, local_path, local_rank)
-
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.barrier()
     else:
         if local_rank <= 0:
             print(f"✅ Model weights found locally at {local_path}")

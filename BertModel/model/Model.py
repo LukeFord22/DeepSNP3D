@@ -33,19 +33,12 @@ class DNABERTClassifier(nn.Module):
 
 
         # === Attention ===
-        self.dna_attention = DNAAttention(hidden_size, num_heads=config.model.num_attention_heads)
         self.token_attention = TokenAttention(hidden_size, num_heads=config.model.num_attention_heads, dropout=0.1, config=config)
-
 
         # === SNP Temperature ===
         self.token_snp_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
-        self.dna_snp_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
-        self.cons_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
-
-        # === DNA Temperature ===
         self.token_conf_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
-        self.dna_conf_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
-
+        self.cons_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
         # === Epigenetic Temperature ===
         self.gerp_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
@@ -59,36 +52,18 @@ class DNABERTClassifier(nn.Module):
         self.h2afz_temperature = nn.Parameter(torch.tensor(1.0), requires_grad=True)
 
         # Add temperature constraints
-        self.min_temperature = 0.1  # Prevent division by near-zero
-        self.max_temperature = 10.0  # Prevent extreme scaling
-
-        # === SNP DNA ===
-        self.dna_backbone = nn.Sequential(
-            ResidualBlock(hidden_size),
-            nn.Dropout(0.3),
-            ResidualBlock(hidden_size),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-        )
-
-        self.dna_heads = nn.ModuleDict({
-            'dna_detection': nn.Sequential(
-                nn.Linear(hidden_size // 2, 2)
-            ),
-            'dna_confidence': nn.Sequential(
-                nn.Linear(hidden_size // 2, 1),
-                nn.Sigmoid()
-            ),
-        })
+        self.min_temperature = 0.01  # Prevent division by near-zero
+        self.max_temperature = 100.0  # Prevent extreme scaling
 
 
         # === SNP-specific processing ===
         self.snp_backbone = nn.Sequential(
             ResidualBlock(hidden_size),
             nn.Dropout(0.3),
+            nn.Linear(hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
+            nn.Dropout(0.2),
             ResidualBlock(hidden_size),
             nn.Dropout(0.2),
             nn.Linear(hidden_size, hidden_size),
@@ -107,18 +82,22 @@ class DNABERTClassifier(nn.Module):
                 nn.Linear(hidden_size // 2, 2)  # Final classification
             ),
             'snp_confidence': nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 4),
-                nn.LayerNorm(hidden_size // 4),
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.LayerNorm(hidden_size // 2),
                 nn.GELU(),
                 nn.Dropout(0.1),
-                nn.Linear(hidden_size // 4, 1),
+                nn.Linear(hidden_size // 2, 1),
                 nn.Sigmoid()
             ),
             'snp_consequence': nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 4),
-                nn.LayerNorm(hidden_size // 4),
+                ResidualBlock(hidden_size),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.LayerNorm(hidden_size // 2),
                 nn.GELU(),
                 nn.Dropout(0.1),
+                nn.Linear(hidden_size // 2, hidden_size // 4),
+                nn.GELU(),
                 nn.Linear(hidden_size // 4, 1),
                 nn.Sigmoid()
             )
@@ -224,30 +203,12 @@ class DNABERTClassifier(nn.Module):
         token_h3k27me3 = self.epigenetic_heads['EncodeH3K27me3_sum'](epigenetic_features) / self.get_safe_temperature(self.h3k27me3_temperature)
         token_h2afz = self.epigenetic_heads['EncodeH2AFZ_sum'](epigenetic_features) / self.get_safe_temperature(self.h2afz_temperature)
 
-        # === Enhanced DNA Attention ===
-        dna_attention = self.dna_attention(
-            token_features=token_attention, 
-            mask=attention_mask,
-            token_snp_logits=token_snp,
-        )
-        dna_features = self.dna_backbone(dna_attention)
-
-        # === Sequence level logits ===
-        dna_conf = self.dna_heads['dna_confidence'](dna_features) / self.dna_conf_temperature
-        dna_snp = self.dna_heads['dna_detection'](dna_features) / self.dna_snp_temperature
-
-        # === Calculate most likely token probability for consistency ===
-        token_probs = torch.softmax(token_snp, dim=-1)[..., 1]  # [B, T]
-        token_max_probs, _ = token_probs.max(dim=1, keepdim=True)  # [B, 1]
-
 
         return {
             'token_snp': token_snp,
             'token_conf': token_conf,
             'token_cons': token_cons,
             'token_gerp': token_gerp,
-            'dna_snp': dna_snp,
-            'dna_conf': dna_conf,
             'token_rna': token_rna,
             'token_dnase': token_dnase,
             'token_h3k27ac': token_h3k27ac,
@@ -256,7 +217,6 @@ class DNABERTClassifier(nn.Module):
             'token_h3k9me3': token_h3k9me3,
             'token_h3k27me3': token_h3k27me3,
             'token_h2afz': token_h2afz,
-            'token_max_probs': token_max_probs
         }
     
 
@@ -500,82 +460,3 @@ class TokenAttention(nn.Module):
 
 
 
-
-
-class DNAAttention(nn.Module):
-    def __init__(self, hidden_size, num_heads=16):
-        super().__init__()
-        self.num_heads = num_heads
-        self.hidden_size = hidden_size
-        self.head_dim = hidden_size // num_heads
-
-        # Self-attention components
-        self.norm = nn.LayerNorm(hidden_size)
-        self.query = nn.Linear(hidden_size, hidden_size)
-        self.key = nn.Linear(hidden_size, hidden_size)
-        self.value = nn.Linear(hidden_size, hidden_size)
-
-        # Improved token scoring
-        self.token_scorer = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size // 2, 1)
-        )
-
-        # Learnable SNP influence weight
-        self.snp_influence_weight = nn.Parameter(torch.tensor(2.0), requires_grad=True)
-        
-        # === More Efficient Fusion ===
-        self.fusion_layer = nn.Sequential(
-            nn.Linear(hidden_size * 3, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.GELU(),
-            nn.Dropout(0.1),
-        )
-
-    def forward(self, token_features, mask, token_snp_logits=None):
-        B, T, H = token_features.size()
-        token_features = self.norm(token_features)
-
-        # === Multi-head attention context ===
-        Q = self.query(token_features).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        K = self.key(token_features).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        V = self.value(token_features).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-
-        # Efficient attention computation
-        mask_exp = mask.unsqueeze(1).unsqueeze(2).to(dtype=Q.dtype)
-        attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        attention_scores = attention_scores * mask_exp + (1.0 - mask_exp) * (-1e4)
-        attention_probs = F.softmax(torch.clamp(attention_scores, -50, 50), dim=-1)
-        attended = torch.matmul(attention_probs, V).transpose(1, 2).contiguous().view(B, T, H)
-
-        # === Efficient Pooling on Refined Features ===
-        mask_expanded = mask.unsqueeze(-1)
-        mask_sum = mask.sum(dim=1, keepdim=True).clamp(min=1)
-        
-        # Mean pooling on refined token features
-        mean_pooled = (token_features * mask_expanded).sum(dim=1) / mask_sum  # [B, H]
-        
-        # Attention-weighted pooling
-        attn_pooled = (attended * mask_expanded).sum(dim=1) / mask_sum  # [B, H]
-
-        # === SNP-Informed Attention Pooling (more effective on refined features) ===
-        raw_scores = self.token_scorer(token_features).squeeze(-1)  # [B, T]
-        raw_scores = raw_scores.masked_fill(mask == 0, float('-inf'))
-
-        if token_snp_logits is not None:
-            snp_influence = torch.softmax(token_snp_logits, dim=-1)[..., 1] * self.snp_influence_weight
-            combined_scores = raw_scores + snp_influence
-        else:
-            combined_scores = raw_scores
-            
-        token_weights = F.softmax(torch.clamp(combined_scores, -10, 10), dim=1)
-        score_pooled = (token_features * token_weights.unsqueeze(-1)).sum(dim=1)  # [B, H]
-
-        # === Efficient Fusion ===
-        pooled_features = torch.cat([mean_pooled, attn_pooled, score_pooled], dim=-1)  # [B, H*3]
-        fused = self.fusion_layer(pooled_features)  # [B, H]
-
-        return fused

@@ -70,17 +70,6 @@ def train_model(config=None):
 
     epoch_timing_history = {}
 
-    # scheduler function
-    def delayed_consistency_scheduler(epoch):
-        if epoch < config.training.consistency_start_epoch:
-            return 0.0  # No consistency loss before threshold epoch
-        else:
-            # Calculate warmup based on epochs after the threshold
-            effective_epoch = epoch - config.training.consistency_start_epoch
-            return min(1.0, effective_epoch / config.training.consistency_warmup_epochs)
-
-    consistency_scheduler = delayed_consistency_scheduler
-
     global_step = 0
     best_eval_metrics = None
 
@@ -89,8 +78,7 @@ def train_model(config=None):
         epoch_start_time = time.time()
     for epoch in range(config.training.num_epochs):
         model_engine.train()
-        total_loss = 0
-        consistency_weight = consistency_scheduler(epoch)        
+        total_loss = 0    
             
         
         # === Get curriculum-specific indices and sampler ===
@@ -148,7 +136,7 @@ def train_model(config=None):
             current_step = epoch * len(train_loader) + step
             # Extract outputs
 
-            dense_losses = compute_dense_losses(outputs, batch, device, config, consistency_weight)
+            dense_losses = compute_dense_losses(outputs, batch, device, config)
             sparse_losses = compute_sparse_losses(outputs, batch, device, config)
 
             # === Joint Loss ===
@@ -156,13 +144,8 @@ def train_model(config=None):
                 dense_losses['loss_snp'] +
                 dense_losses['loss_snp_hnm'] +
                 dense_losses['loss_snp_conf'] +
-                dense_losses['loss_snp_fp'] +
                 dense_losses['loss_cons'] +
-                dense_losses['loss_dna'] +
-                dense_losses['loss_dna_hnm'] +
-                dense_losses['loss_dna_conf'] +
-                dense_losses['loss_dna_fp'] +
-                dense_losses['loss_consistency'] +
+                dense_losses['loss_snp_precision'] +
                 sparse_losses['loss_rna'] +
                 sparse_losses['loss_dnase'] +
                 sparse_losses['loss_gerp'] +
@@ -230,7 +213,6 @@ def train_model(config=None):
 
             # == Extract outputs ==
             logits_token_snp = outputs['token_snp']
-            logits_dna_snp = outputs['dna_snp']
 
             # === Extract all label types ===
             snp_label = batch['snp_label'].to(device).long()
@@ -253,47 +235,25 @@ def train_model(config=None):
                 else:
                     precision_token = torch.tensor(0.0, device=device)
                             
-                # DNA-level
-                preds_dna = logits_dna_snp.argmax(dim=1)
-                true_dna = batch['has_mutation'].to(device)
-                tp_dna = ((preds_dna == 1) & (true_dna == 1)).sum()
-                fp_dna = ((preds_dna == 1) & (true_dna == 0)).sum()
-                precision_dna = tp_dna.float() / (tp_dna + fp_dna + 1e-8)
-                
-                # Log both raw and smoothed precision to wandb (only on rank 0)
-                if local_rank <= 0:
-                    wandb.log({
-                        'precision/token': precision_token.item(),
-                        'precision/dna': precision_dna.item(),
-                        'training/step': global_step
-                    })
-
-                    # Update tqdm progress bar
-                    progress_bar.set_postfix({
-                        'token_snp': f'{dense_losses["loss_snp"].item():.3f}',
-                        'token_conf': f'{dense_losses["loss_snp_conf"].item():.3f}',
-                        'dna_snp': f'{dense_losses["loss_dna"].item():.3f}',
-                        'dna_conf': f'{dense_losses["loss_dna_conf"].item():.3f}',
-                        'PrecT': f'{precision_token.item():.3f}',
-                        'PrecD': f'{precision_dna.item():.3f}',
-                        'ETA': eta_string
-                    })
 
             if local_rank <= 0:
+
+                progress_bar.set_postfix({
+                    'token_snp': f'{dense_losses["loss_snp"].item():.3f}',
+                    'token_conf': f'{dense_losses["loss_snp_conf"].item():.3f}',
+                    'PrecT': f'{precision_token.item():.3f}',
+                    'ETA': eta_string
+                })
+
                 progress_bar.update(1)
 
                 # Log to wandb
                 wandb.log({
                     'loss/loss_snp': dense_losses['loss_snp'].detach().item(),
-                    'loss/loss_dna': dense_losses['loss_dna'].detach().item(),
-                    'loss/loss_snp_conf': dense_losses['loss_snp_conf'].detach().item(),
-                    'loss/loss_dna_conf': dense_losses['loss_dna_conf'].detach().item(),
-                    'loss/loss_consistency': dense_losses['loss_consistency'].detach().item(),
                     'loss/loss_snp_fp': dense_losses['loss_snp_fp'].detach().item(),
-                    'loss/loss_dna_fp': dense_losses['loss_dna_fp'].detach().item(),
                     'loss/loss_snp_hnm': dense_losses['loss_snp_hnm'].detach().item(),
-                    'loss/loss_dna_hnm': dense_losses['loss_dna_hnm'].detach().item(),
                     'loss/loss_cons': dense_losses['loss_cons'].detach().item(),
+                    'loss/loss_snp_precision': dense_losses['loss_snp_precision'].detach().item(),
                     'loss/loss_rna': sparse_losses['loss_rna'].detach().item(),
                     'loss/loss_dnase': sparse_losses['loss_dnase'].detach().item(),
                     'loss/loss_gerp': sparse_losses['loss_gerp'].detach().item(),
@@ -306,83 +266,15 @@ def train_model(config=None):
                     'loss/loss_total': loss.detach().item() * config.training.grad_accum_steps,
                     'training/eta_hours': eta_hours1,
                     'training/learning_rate': optimizer.param_groups[0]['lr'],
-                    'training/consistency_weight': consistency_weight,
                     'training/step': global_step,
                     'precision/token': precision_token.item(),
-                    'precision/dna': precision_dna.item(),
                 })
 
-            # === BACKWARD PASS - DeepSpeed handles this ===
+            # === BACKWARD PASS ===
             model_engine.backward(loss)
 
-            # === DeepSpeed handles gradient accumulation and optimizer step ===
+            # === Model engine Step ===
             model_engine.step()
-            
-            # Track gradients (only on rank 0)
-            if local_rank <= 0:
-                # Get all major model components for gradient tracking
-
-                if step == 0:  # Initialize once per epoch
-                    gradient_history = {name: [] for name in [
-                        "base_model", "dna_attention", "token_attention",
-                        "dna_backbone", "snp_backbone", "epigenetic_backbone", 
-                        "dna_detection", "dna_confidence", "snp_detection", 
-                        "snp_confidence", "snp_consequence", "epi_rna", 
-                        "epi_dnase", "epi_h3k27ac", "epi_h3k4me3", "epi_h3k36me3",
-                        "epi_h3k9me3", "epi_h3k27me3", "epi_h2afz", "epi_gerp"
-                    ]}
-
-                all_modules = {
-                    # Base model
-                    "base_model": model_engine.module.base,
-                    
-                    # Attention modules
-                    "dna_attention": model_engine.module.dna_attention,
-                    "token_attention": model_engine.module.token_attention,
-                    
-                    # Backbone networks
-                    "dna_backbone": model_engine.module.dna_backbone,
-                    "snp_backbone": model_engine.module.snp_backbone,
-                    "epigenetic_backbone": model_engine.module.epigenetic_backbone,
-                    
-                    # DNA heads
-                    "dna_detection": model_engine.module.dna_heads['dna_detection'],
-                    "dna_confidence": model_engine.module.dna_heads['dna_confidence'],
-                    
-                    # SNP heads
-                    "snp_detection": model_engine.module.snp_heads['snp_detection'],
-                    "snp_confidence": model_engine.module.snp_heads['snp_confidence'],
-                    "snp_consequence": model_engine.module.snp_heads['snp_consequence'],
-                    
-                    # Epigenetic heads
-                    "epi_rna": model_engine.module.epigenetic_heads['EncodetotalRNA_sum'],
-                    "epi_dnase": model_engine.module.epigenetic_heads['EncodeDNase_sum'],
-                    "epi_h3k27ac": model_engine.module.epigenetic_heads['EncodeH3K27ac_sum'],
-                    "epi_h3k4me3": model_engine.module.epigenetic_heads['EncodeH3K4me3_sum'],
-                    "epi_h3k36me3": model_engine.module.epigenetic_heads['EncodeH3K36me3_sum'],
-                    "epi_h3k9me3": model_engine.module.epigenetic_heads['EncodeH3K9me3_sum'],
-                    "epi_h3k27me3": model_engine.module.epigenetic_heads['EncodeH3K27me3_sum'],
-                    "epi_h2afz": model_engine.module.epigenetic_heads['EncodeH2AFZ_sum'],
-                    "epi_gerp": model_engine.module.epigenetic_heads['gerp'],
-                }
-
-                # Initialize gradient history for all modules (add this at the beginning of train_model)
-                gradient_history = {name: [] for name in all_modules.keys()}
-
-                # Track gradients for all modules
-                for name, module in all_modules.items():
-                    grads = [p.grad for p in module.parameters() if p.grad is not None]
-                    if grads:
-                        mean_grad = torch.stack([g.abs().mean() for g in grads]).mean().item()
-                        if not np.isfinite(mean_grad):
-                            mean_grad = 0.0
-                    else:
-                        mean_grad = 0.0
-                    gradient_history[name].append(mean_grad)
-                    
-                    # Log gradient norms to wandb
-                    wandb.log({f'gradients/{name}': mean_grad, 'training/step': global_step})
-
             global_step += 1
             total_loss += loss.detach().item()        
             
@@ -397,18 +289,8 @@ def train_model(config=None):
                 'epoch/token_precision': eval_metrics['token_metrics']['precision'],
                 'epoch/token_recall': eval_metrics['token_metrics']['recall'],
                 'epoch/token_f1': eval_metrics['token_metrics']['f1'],
-                'epoch/dna_accuracy': eval_metrics['dna_metrics']['accuracy'],
-                'epoch/dna_precision': eval_metrics['dna_metrics']['precision'],
-                'epoch/dna_recall': eval_metrics['dna_metrics']['recall'],
-                'epoch/dna_f1': eval_metrics['dna_metrics']['f1'],
                 'epoch/epoch': epoch + 1
             })
-
-        # Track metrics
-        prec = eval_metrics['dna_metrics']['precision']
-        rec = eval_metrics['dna_metrics']['recall']
-        beta = 0.5  # Favor precision slightly
-        current_metric = (1 + beta**2) * (prec * rec) / (beta**2 * prec + rec + 1e-8)
 
         # Store the current evaluation metrics for logging
         best_eval_metrics = eval_metrics
@@ -418,7 +300,7 @@ def train_model(config=None):
 
             # Print epoch summary
             avg_loss = total_loss / steps_per_epoch
-            tqdm.write(f"Epoch {epoch+1}/{config.training.num_epochs} | Train Loss: {avg_loss:.4f} | Val Loss: {eval_metrics['val_loss']:.4f} | DNA F1: {eval_metrics['dna_metrics']['f1']:.4f} | Token F1: {eval_metrics['token_metrics']['f1']:.4f}")
+            tqdm.write(f"Epoch {epoch+1}/{config.training.num_epochs} | Train Loss: {avg_loss:.4f} | Val Loss: {eval_metrics['val_loss']:.4f} | Token F1: {eval_metrics['token_metrics']['f1']:.4f}")
 
 
     # Finish the training loop
@@ -433,12 +315,8 @@ def train_model(config=None):
         # Log confusion matrices and confidence plots after training
         print("Logging confusion matrices and confidence plots...")
         token_cm = best_eval_metrics['token_metrics']['confusion_matrix']
-        dna_cm = best_eval_metrics['dna_metrics']['confusion_matrix']
         token_class_names = ["Non-SNP", "SNP"]
 
-
-        dna_preds = best_eval_metrics['dna_preds']
-        dna_class_names = ["Non-Mutated", "Mutated"]
 
         # Create and log token confusion matrix
         token_cm_fig = plot_confusion_matrix(
@@ -449,14 +327,6 @@ def train_model(config=None):
         wandb.log({"final/token_confusion_matrix_plot": wandb.Image(token_cm_fig)})
         plt.close(token_cm_fig)
 
-        # Create and log DNA confusion matrix
-        dna_cm_fig = plot_confusion_matrix(
-            dna_cm,
-            classes=dna_class_names,
-            title='DNA-Level Confusion Matrix'
-        )
-        wandb.log({"final/dna_confusion_matrix_plot": wandb.Image(dna_cm_fig)})
-        plt.close(dna_cm_fig)
 
         # Prepare data for token-level plot
         token_conf_correct = [conf for conf, pred, label in zip(
@@ -471,26 +341,14 @@ def train_model(config=None):
             best_eval_metrics['token_labels']
         ) if pred != label]
 
-        # Prepare data for DNA-level confidence plot
-        dna_conf_correct = [conf for conf, pred, label in zip(
-            best_eval_metrics['dna_conf'], 
-            best_eval_metrics['dna_preds'], 
-            best_eval_metrics['dna_labels']
-        ) if pred == label]
-
-        dna_conf_incorrect = [conf for conf, pred, label in zip(
-            best_eval_metrics['dna_conf'], 
-            best_eval_metrics['dna_preds'], 
-            best_eval_metrics['dna_labels']
-        ) if pred != label]
 
         # Create and log confidence box plots
-        conf_fig = create_confidence_boxplots(token_conf_correct, token_conf_incorrect, dna_conf_correct, dna_conf_incorrect)
+        conf_fig = create_confidence_boxplots(token_conf_correct, token_conf_incorrect)
         wandb.log({"final/confidence_boxplots": wandb.Image(conf_fig)})
         plt.close(conf_fig)
 
         # Create and log confidence histograms
-        hist_fig = create_confidence_histograms(token_conf_correct, token_conf_incorrect, dna_conf_correct, dna_conf_incorrect)
+        hist_fig = create_confidence_histograms(token_conf_correct, token_conf_incorrect)
         wandb.log({"final/confidence_histograms": wandb.Image(hist_fig)})
         plt.close(hist_fig)
         

@@ -9,7 +9,7 @@ os.environ['WANDB_API_KEY'] = 'f9ef5f01cec347e6598e41294b2dce5380dedbc1'
 @dataclass
 class TrainingConfig:
     """Training configuration parameters."""
-    batch_size: int = 48
+    batch_size: int = 32
     num_epochs: int = 1
     learning_rate: float = 3e-5
     grad_accum_steps: int = 2
@@ -20,28 +20,22 @@ class TrainingConfig:
     
     # Training strategies
     curriculum_start: int = 5
-    consistency_start_epoch: int = 5
-    consistency_warmup_epochs: int = 3
     
     # Loss weights
-    token_snp_weight: float = 10.0
-    token_conf_weight: float = 2.0
-    dna_snp_weight: float = 10.0
-    dna_conf_weight: float = 1.0
-    token_fp_penalty_weight: float = 5.0
-    dna_fp_penalty_weight: float = 2.0
-    token_hnm_weight: float = 1.0
-    dna_hnm_weight: float = 50.0
-    token_rna_weight: float = 1.0
-    token_cons_weight: float = 10.0
-    token_gerp_weight: float = 1.0
-    token_dnase_weight: float = 1.0
-    token_h3k27ac_weight: float = 1.0
-    token_h3k4me3_weight: float = 1.0
-    token_h3k36me3_weight: float = 1.0
-    token_h3k9me3_weight: float = 1.0
-    token_h3k27me3_weight: float = 1.0
-    token_h2afz_weight: float = 1.0
+    snp_weight: float = 10.0
+    conf_weight: float = 2.0
+    fp_penalty_weight: float = 5.0
+    hnm_weight: float = 1.0
+    rna_weight: float = 1.0
+    cons_weight: float = 10.0
+    gerp_weight: float = 1.0
+    dnase_weight: float = 1.0
+    h3k27ac_weight: float = 1.0
+    h3k4me3_weight: float = 1.0
+    h3k36me3_weight: float = 1.0
+    h3k9me3_weight: float = 1.0
+    h3k27me3_weight: float = 1.0
+    h2afz_weight: float = 1.0
 
 @dataclass
 class ModelConfig:

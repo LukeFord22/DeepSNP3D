@@ -15,6 +15,8 @@ from BertModel.training.train import train_model
 from BertModel.training.setup_deepspeed import setup_training
 
 os.environ["NCCL_P2P_DISABLE"] = "1"
+os.environ["NCCL_BLOCKING_WAIT"] = "1"
+os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
 def set_seed(seed=42):
     random.seed(seed)

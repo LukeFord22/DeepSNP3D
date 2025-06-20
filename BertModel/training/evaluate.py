@@ -15,8 +15,7 @@ def evaluate(model, dataloader, device):
 
     # === Accumulators ===
     all_token_preds, all_token_labels = [], []
-    all_dna_preds, all_dna_labels = [], []
-    token_conf_scores, dna_conf_scores = [], []
+    token_conf_scores = []
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(dataloader):
@@ -44,8 +43,6 @@ def evaluate(model, dataloader, device):
             # === Extract outputs ===
             logits_token_snp = outputs['token_snp']
             logits_token_conf = outputs['token_conf']
-            logits_dna_snp = outputs['dna_snp']
-            logits_dna_conf = outputs['dna_conf']
             
             # === Process token-level outputs ===
             batch_size, seq_len, n_features = logits_token_snp.shape
@@ -62,24 +59,14 @@ def evaluate(model, dataloader, device):
             # Extract token-level confidence
             token_conf = torch.sigmoid(logits_token_conf).view(-1)[valid_token_mask].cpu().numpy()
             
-            # Process DNA-level outputs
-            dna_preds = logits_dna_snp.argmax(dim=1).cpu().numpy()
-            dna_labels = device_batch['has_mutation'].cpu().numpy()
-            dna_conf = torch.sigmoid(logits_dna_conf).squeeze(-1).cpu().numpy()
-            
             # Append results
             all_token_preds.extend(token_preds.tolist())
             all_token_labels.extend(token_labels.tolist())
-            all_dna_preds.extend(dna_preds.tolist())
-            all_dna_labels.extend(dna_labels.tolist())
             token_conf_scores.extend(token_conf.tolist())
-            dna_conf_scores.extend(dna_conf.tolist())
 
             # Track loss
             token_loss = nn.CrossEntropyLoss(ignore_index=-100)(logits_token_flat, labels_flat)
-            dna_loss = nn.CrossEntropyLoss()(logits_dna_snp, device_batch['has_mutation'].long())
-            loss = token_loss + dna_loss
-            loss_total += loss.item()
+            loss_total += token_loss.item()
 
     # === Compute Metrics ===
     val_loss = loss_total / len(dataloader)
@@ -90,13 +77,6 @@ def evaluate(model, dataloader, device):
         all_token_labels, all_token_preds, average='weighted', zero_division=0
     )
     token_cm = confusion_matrix(all_token_labels, all_token_preds)
-    
-    # DNA-level metrics
-    dna_accuracy = accuracy_score(all_dna_labels, all_dna_preds)
-    dna_precision, dna_recall, dna_f1, _ = precision_recall_fscore_support(
-        all_dna_labels, all_dna_preds, average='binary', zero_division=0
-    )
-    dna_cm = confusion_matrix(all_dna_labels, all_dna_preds)
 
     return {
         'val_loss': val_loss,
@@ -107,19 +87,9 @@ def evaluate(model, dataloader, device):
             'f1': token_f1,
             'confusion_matrix': token_cm
         },
-        'dna_metrics': {
-            'accuracy': dna_accuracy,
-            'precision': dna_precision,
-            'recall': dna_recall,
-            'f1': dna_f1,
-            'confusion_matrix': dna_cm
-        },
         'token_conf': token_conf_scores,
-        'dna_conf': dna_conf_scores,
         'token_preds': all_token_preds,
         'token_labels': all_token_labels,
-        'dna_preds': all_dna_preds,
-        'dna_labels': all_dna_labels
     }
 
 
@@ -157,7 +127,7 @@ def plot_confusion_matrix(cm, classes, title='Confusion Matrix', cmap=plt.cm.Blu
 
 
 # == confidence box plots ==
-def create_confidence_boxplots(token_conf_correct, token_conf_incorrect, dna_conf_correct, dna_conf_incorrect):
+def create_confidence_boxplots(token_conf_correct, token_conf_incorrect):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
     
     # Token-level confidence box plot
@@ -179,32 +149,10 @@ def create_confidence_boxplots(token_conf_correct, token_conf_incorrect, dna_con
         x = np.random.normal(i+1, 0.08, size=len(data))
         ax1.scatter(x, data, alpha=0.3, s=10, c=token_colors[i])
     
-    # DNA-level confidence box plot
-    dna_data = [dna_conf_correct, dna_conf_incorrect]
-    dna_labels = ['Correct', 'Incorrect']
-    dna_colors = ['#2ecc71', '#e74c3c']
-    
-    box2 = ax2.boxplot(dna_data, labels=dna_labels, patch_artist=True)
-    for patch, color in zip(box2['boxes'], dna_colors):
-        patch.set_facecolor(color)
-    
-    ax2.set_title('DNA-Level Confidence', fontsize=14)
-    ax2.set_ylabel('Confidence Score', fontsize=12)
-    ax2.grid(True, linestyle='--', alpha=0.7)
-    
-    # Add individual points with jitter
-    for i, data in enumerate(dna_data):
-        x = np.random.normal(i+1, 0.08, size=len(data))
-        ax2.scatter(x, data, alpha=0.3, s=10, c=dna_colors[i])
-    
     # Add statistics as text
     stats_token = f"Correct: mean={np.mean(token_conf_correct):.3f}, median={np.median(token_conf_correct):.3f}, n={len(token_conf_correct)}\n"
     stats_token += f"Incorrect: mean={np.mean(token_conf_incorrect):.3f}, median={np.median(token_conf_incorrect):.3f}, n={len(token_conf_incorrect)}"
     ax1.text(0.5, -0.15, stats_token, transform=ax1.transAxes, ha='center', fontsize=10)
-    
-    stats_dna = f"Correct: mean={np.mean(dna_conf_correct):.3f}, median={np.median(dna_conf_correct):.3f}, n={len(dna_conf_correct)}\n"
-    stats_dna += f"Incorrect: mean={np.mean(dna_conf_incorrect):.3f}, median={np.median(dna_conf_incorrect):.3f}, n={len(dna_conf_incorrect)}"
-    ax2.text(0.5, -0.15, stats_dna, transform=ax2.transAxes, ha='center', fontsize=10)
     
     plt.tight_layout(pad=3.0)
     plt.suptitle('Confidence Distribution: Correct vs. Incorrect Predictions', fontsize=16, y=1.05)
@@ -214,7 +162,7 @@ def create_confidence_boxplots(token_conf_correct, token_conf_incorrect, dna_con
 
 
 # == histograms for more detailed distribution ==
-def create_confidence_histograms(token_conf_correct, token_conf_incorrect, dna_conf_correct, dna_conf_incorrect):
+def create_confidence_histograms(token_conf_correct, token_conf_incorrect):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
     
     # Token confidence histogram
@@ -226,18 +174,6 @@ def create_confidence_histograms(token_conf_correct, token_conf_incorrect, dna_c
     ax1.set_ylabel('Count', fontsize=12)
     ax1.legend()
     ax1.grid(True, linestyle='--', alpha=0.7)
-    
-    # DNA confidence histogram
-    ax2.hist([dna_conf_correct, dna_conf_incorrect], bins=bins, stacked=True,
-                color=['#2ecc71', '#e74c3c'], alpha=0.7, label=['Correct', 'Incorrect'])
-    ax2.set_title('DNA-Level Confidence Distribution', fontsize=14)
-    ax2.set_xlabel('Confidence Score', fontsize=12)
-    ax2.set_ylabel('Count', fontsize=12)
-    ax2.legend()
-    ax2.grid(True, linestyle='--', alpha=0.7)
-    
-    plt.tight_layout()
-    plt.suptitle('Confidence Score Distributions', fontsize=16, y=1.05)
     
     return fig
 
@@ -277,9 +213,6 @@ def create_token_highlighting(model, dataloader, device, tokenizer, max_samples=
             # Extract predictions and confidence
             token_preds = outputs['token_snp'].argmax(dim=-1)
             token_conf = outputs['token_conf'].squeeze(-1)
-            
-            # Extract DNA-level confidence
-            dna_conf = outputs['dna_conf'].squeeze(-1)
             
             # Extract epigenetic score predictions (these exist in your model)
             rna_preds = outputs['token_rna'].squeeze(-1) if 'token_rna' in outputs else None
@@ -337,6 +270,13 @@ def create_token_highlighting(model, dataloader, device, tokenizer, max_samples=
                 confs = token_conf[i, valid_indices].cpu().numpy()
                 true_snp_labels = snp_labels[valid_indices].cpu().numpy()
                 true_cons_labels = cons_labels[valid_indices].cpu().numpy()
+
+                predicted_mutation = int((preds == 1).any())
+                # DNA-level confidence: max token confidence for predicted SNPs, else max overall
+                if (preds == 1).any():
+                    dna_confidence = float(confs[preds == 1].max())
+                else:
+                    dna_confidence = float(confs.max()) if len(confs) > 0 else 0.0
                 
                 # Get epigenetic predictions
                 rna_pred_vals = rna_preds[i, valid_indices].cpu().numpy() if rna_preds is not None else None
@@ -429,8 +369,8 @@ def create_token_highlighting(model, dataloader, device, tokenizer, max_samples=
                     "id": f"sample_{sample_count}",
                     "tokens": token_data,
                     "has_mutation": bool(device_batch['has_mutation'][i].item()),
-                    "predicted_mutation": bool(outputs['dna_snp'][i].argmax().item()),
-                    "dna_confidence": float(dna_conf[i].item())
+                    "predicted_mutation": bool(predicted_mutation),
+                    "dna_confidence": dna_confidence
                 })
     
     return samples
@@ -583,7 +523,7 @@ def create_html_token_tables(samples):
 
 
 
-def save_model(model_engine, path='dnabert_classifier_final_deepspeed.pth'):
+def save_model(model_engine, path='DeepSNP3D.pth'):
     # Save the model to the current directory
     import os
     

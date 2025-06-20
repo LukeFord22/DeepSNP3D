@@ -8,14 +8,11 @@ import math
 #                                                                                      Loss Calculations
 #=======================================================================================================
 
-def compute_dense_losses(outputs, batch, device, config, consistency_weight):
+def compute_dense_losses(outputs, batch, device, config):
     # == Extract outputs ==
     logits_snp = outputs['token_snp']
     logits_cons = outputs['token_cons']
-    logits_dna = outputs['dna_snp']
     logits_snp_conf = outputs['token_conf'] 
-    logits_dna_conf = outputs['dna_conf']
-    token_max_probs = outputs['token_max_probs'].squeeze(-1)
 
     # === Extract label types ===
     # Use dense labels for existing loss functions (SNP and CONS)
@@ -44,8 +41,8 @@ def compute_dense_losses(outputs, batch, device, config, consistency_weight):
     valid_cons_mask = valid_token_mask & (cons_label != -100.0)
     if valid_cons_mask.any():
         loss_cons = SNPConsequenceFocalLoss(
-            snp_alpha=3.0,           # Focus heavily on SNP magnitude
-            snp_gamma=2.0,           # Moderate focus on difficult cases
+            snp_alpha=1.0,           # Focus heavily on SNP magnitude
+            snp_gamma=1.0,           # Moderate focus on difficult cases
             background_weight=0.005,  # Very low penalty for background
             snp_threshold=0.1,       # Values > 0.1 considered "high consequence"
             background_threshold=0.05 # Values < 0.05 considered "background"
@@ -112,77 +109,25 @@ def compute_dense_losses(outputs, batch, device, config, consistency_weight):
     else:
         loss_snp_hnm = torch.tensor(0.0, device=device)
 
-    # === DNA-level Losses (unchanged) ===
-    loss_dna = LearnableBinaryDNAFocalLoss(
-        gamma_init=2.0,     
-        alpha_init=0.9,         
-        reduction='mean',
-        weight_constraint='exp' 
-    )(logits_dna, batch['has_mutation'].to(device)) 
-
-    dna_correctness = (logits_dna.argmax(dim=1) == batch['has_mutation'].to(device)).float()
-    loss_dna_conf = DNAConfidenceLoss(
-        num_bins=15,
-        ece_weight=0.1,
-        overconf_penalty=2.0
-    )(logits_dna_conf.squeeze(-1), dna_correctness) 
-
-    # === DNA False Positive Loss ===
-    dna_preds = logits_dna.argmax(dim=1)
-    dna_labels = batch['has_mutation'].to(device)
-    dna_fp_mask = (dna_preds == 1) & (dna_labels == 0)
-
-    if dna_fp_mask.any():
-        dna_fp_conf = logits_dna_conf[dna_fp_mask].squeeze(-1)
-        dna_fp_focal = AdaptiveFalsePositiveFocalPenalty(
-            low_gamma=1.5,
-            high_gamma=3.0,  
-            threshold=0.7,
-            low_alpha=1.0,
-            high_alpha=4.0
-        )
-        loss_dna_fp = dna_fp_focal(dna_fp_conf)
+    #=== Precision Loss ===
+    if valid_token_mask.any():
+        snp_precision_loss = PrecisionWeightedLoss(
+            token_weight=1.0, 
+            dna_weight=0.0, 
+            base_loss_fn=WeightedFocalLoss(gamma=2.0, weight=torch.tensor([1.0, 1000.0], device=logits_snp.device))
+        )(logits_snp[valid_token_mask], snp_label[valid_token_mask], calculate_metrics=True)
     else:
-        loss_dna_fp = torch.tensor(0.0, device=device)
+        snp_precision_loss = torch.tensor(0.0, device=device)
 
-    # === DNA Hard Negative Mining ===
-    dna_logits = logits_dna
-    dna_labels = batch['has_mutation'].to(device)
-    dna_probs = torch.softmax(dna_logits, dim=-1)
 
-    neg_mask = (dna_labels == 0)
-    if neg_mask.any():
-        neg_probs = dna_probs[neg_mask, 1]
-        
-        k = max(1, int(0.3 * neg_mask.sum().item()))
-        _, hardest_indices = neg_probs.topk(k)
-        
-        hard_neg_logits = dna_logits[neg_mask][hardest_indices]
-        hard_neg_labels = dna_labels[neg_mask][hardest_indices]
-        
-        loss_dna_hnm = BinaryDNAFocalLoss(
-            gamma=3.0,
-            alpha=0.95,
-            reduction='mean'
-        )(hard_neg_logits, hard_neg_labels)
-    else:
-        loss_dna_hnm = torch.tensor(0.0, device=device)
-
-    # === Joint Loss ===
-    dna_logits = torch.softmax(logits_dna, dim=-1)[..., 1]
-    consistency_loss = F.mse_loss(dna_logits, token_max_probs.detach()) * consistency_weight
 
     return {
-        'loss_snp': loss_snp * config.training.token_snp_weight,
-        'loss_snp_conf': loss_snp_conf * config.training.token_conf_weight,
-        'loss_dna': loss_dna * config.training.dna_snp_weight,
-        'loss_dna_conf': loss_dna_conf * config.training.dna_conf_weight,
-        'loss_consistency': consistency_loss * consistency_weight,
-        'loss_snp_fp': loss_snp_fp * config.training.token_fp_penalty_weight,
-        'loss_dna_fp': loss_dna_fp * config.training.dna_fp_penalty_weight,
-        'loss_snp_hnm': loss_snp_hnm * config.training.token_hnm_weight,
-        'loss_dna_hnm': loss_dna_hnm * config.training.dna_hnm_weight,
-        'loss_cons': loss_cons * config.training.token_cons_weight
+        'loss_snp': loss_snp * config.training.snp_weight,
+        'loss_snp_conf': loss_snp_conf * config.training.conf_weight,
+        'loss_snp_fp': loss_snp_fp * config.training.fp_penalty_weight,
+        'loss_snp_hnm': loss_snp_hnm * config.training.hnm_weight,
+        'loss_cons': loss_cons * config.training.cons_weight,
+        'loss_snp_precision': snp_precision_loss * config.training.snp_weight,
     }
     
 
@@ -272,7 +217,7 @@ def compute_sparse_losses(outputs, batch, device, config):
                         data_key,
                         max_token_length
                     )
-                    weight = getattr(config.training, f'token_{feature_name}_weight', 1.0)
+                    weight = getattr(config.training, f'{feature_name}_weight', 1.0)
                     losses[f'loss_{feature_name}'] = loss_value * weight
                     
             except Exception as e:
@@ -313,6 +258,65 @@ def mine_hard_negatives(logits, labels, k_ratio=0.3):
         
         return logits[keep_mask], labels[keep_mask]
 
+
+class PrecisionWeightedLoss(nn.Module):
+    def __init__(self, token_weight=0.5, dna_weight=0.5, base_loss_fn=None, smoothing=0.95):
+        super().__init__()
+        self.token_weight = token_weight
+        self.dna_weight = dna_weight
+        self.smoothing = smoothing
+        self.base_loss_fn = base_loss_fn or nn.CrossEntropyLoss()
+        self.precision_history = {'token': 0.0, 'dna': 0.0}
+        self.running_steps = 0
+        
+    def forward(self, outputs, targets, calculate_metrics=True):
+        # Base loss calculation
+        loss = self.base_loss_fn(outputs, targets)
+        
+        if calculate_metrics:
+            # Calculate precision metrics
+            with torch.no_grad():
+                # Get predictions - handle different tensor shapes
+                if outputs.dim() > 1 and outputs.size(-1) > 1:  # Classification with logits
+                    preds = outputs.argmax(dim=-1)
+                else:  # Binary prediction
+                    preds = (outputs > 0).long()
+                
+                # Handle different shapes for targets
+                if targets.dim() > 1 and targets.size(-1) > 1:
+                    targets = targets.argmax(dim=-1)
+                
+                # Flatten both tensors to 1D for comparison
+                preds = preds.view(-1)
+                targets = targets.view(-1)
+                
+                # Skip padding tokens for token-level tasks
+                if self.token_weight > 0:
+                    valid_mask = (targets != -100)
+                    preds = preds[valid_mask]
+                    targets = targets[valid_mask]
+                
+                # Calculate TP and FP
+                tp = ((preds == 1) & (targets == 1)).sum()
+                fp = ((preds == 1) & (targets == 0)).sum()
+                
+                # Calculate precision
+                prec = tp.float() / (tp + fp + 1e-8)
+                
+                # Update precision history with smoothing
+                self.precision_history['current'] = prec.item()
+                if self.running_steps == 0:
+                    self.precision_history['smoothed'] = prec.item()
+                else:
+                    self.precision_history['smoothed'] = (self.smoothing * self.precision_history['smoothed'] + 
+                                                        (1 - self.smoothing) * prec.item())
+                self.running_steps += 1
+                
+                # Scale loss inversely with precision
+                precision_factor = 1.0 / (self.precision_history['smoothed'] + 0.1)
+                loss = loss * precision_factor
+        
+        return loss
 
 class DNAConfidenceLoss(nn.Module):
     """
