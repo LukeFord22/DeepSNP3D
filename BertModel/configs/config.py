@@ -4,11 +4,13 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 
+os.environ['WANDB_API_KEY'] = 'f9ef5f01cec347e6598e41294b2dce5380dedbc1'
+
 @dataclass
 class TrainingConfig:
     """Training configuration parameters."""
-    batch_size: int = 32
-    num_epochs: int = 10
+    batch_size: int = 48
+    num_epochs: int = 1
     learning_rate: float = 3e-5
     grad_accum_steps: int = 2
     train_data_fraction: float = 1
@@ -57,7 +59,6 @@ class DataConfig:
 
     # Data loading settings
     test_fraction: float = 0.02
-    num_workers: int = 2  # Number of data loading workers
     pin_memory: bool = True  # Faster GPU transfer
     persistent_workers: bool = True  # Keep workers alive between epochs
 

@@ -19,9 +19,6 @@ def create_deepspeed_config(config, world_size=1):
             "type": "AdamW",
             "params": {
                 "lr": config.training.learning_rate,
-                "betas": [0.9, 0.999],
-                "eps": 1e-8,
-                "weight_decay": 0.01
             }
         },
         
@@ -37,13 +34,10 @@ def create_deepspeed_config(config, world_size=1):
         # Ensure memory optimization is enabled
         "zero_optimization": {
             "stage": config.deepspeed.zero_stage,
-            "contiguous_gradients": True,
             "overlap_comm": True,
-            "memory_efficient_linear": True, 
-            "offload_optimizer": {
-                "device": "cpu",
-                "pin_memory": True
-            }
+            "contiguous_gradients": True,
+            "reduce_bucket_size": 5e8,
+            "allgather_bucket_size": 5e8
         },
 
         "gradient_clipping": config.deepspeed.gradient_clipping,

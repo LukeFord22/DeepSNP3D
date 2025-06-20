@@ -1,15 +1,9 @@
-
-
 import os
 import sys
 import torch
-import deepspeed
-import wandb
 import random
 import traceback
 import numpy as np
-import torch.multiprocessing as mp
-import torch.distributed as dist
 from datetime import datetime
 
 # Add parent directory for imports
@@ -20,11 +14,7 @@ from BertModel.configs.config import default_config
 from BertModel.training.train import train_model
 from BertModel.training.setup_deepspeed import setup_training
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-os.environ['WANDB_API_KEY'] = 'f9ef5f01cec347e6598e41294b2dce5380dedbc1'
+os.environ["NCCL_P2P_DISABLE"] = "1"
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -33,56 +23,35 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def count_gpus():
-    return torch.cuda.device_count()
+def print_gpu_info():
+    """Print detailed GPU information"""
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if gpu_count == 0:
+        print("❌ No CUDA GPUs detected. Exiting.")
+        sys.exit(1)
+    print(f"🔍 Detected {gpu_count} GPU(s):")
+    for i in range(gpu_count):
+        gpu_props = torch.cuda.get_device_properties(i)
+        memory_gb = gpu_props.total_memory / (1024**3)
+        print(f"  GPU {i}: {gpu_props.name} ({memory_gb:.1f}GB)")
+    print()
 
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '29500'
-    torch.distributed.init_process_group(
-        backend='nccl',
-        init_method="env://",
-        rank=rank,
-        world_size=world_size,
-    )
+def train_process_torchrun(rank, world_size, local_rank):
+    """Training process for torchrun launch."""
+    if torch.cuda.is_available() and local_rank < torch.cuda.device_count():
+        torch.cuda.set_device(local_rank)
+        print(f"[Rank {rank}] Set CUDA device to GPU {local_rank}")
 
-def cleanup():
-    dist.destroy_process_group()
-
-
-# =============================================================================
-# TRAINING PROCESS
-# =============================================================================
-
-def train_process(rank, world_size):
-    """Main training loop for a single rank."""
-    
-    os.environ["LOCAL_RANK"] = str(rank)
-    os.environ["NCCL_DEBUG"] = "WARN"
-    
-    torch.cuda.set_device(rank)
-    
     try:
-        print(f"[Rank {rank}] Starting training process...")
-        
-        if world_size > 1:
-            print(f"[Rank {rank}] Setting up distributed training...")
-            setup(rank, world_size)
-            deepspeed.init_distributed()
-        
-        device = torch.device(f"cuda:{rank}")
+        device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
         config = default_config
         config.experiment_name = f"Training-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        
-        print(f"[Rank {rank}] Loading models and setting up training...")
-        # Use our setup_training function instead of setup_fusion_and_deepspeed
+        print(f"[Rank {rank}] Setting up training...")
         (model_engine, optimizer, scheduler, train_loader, test_loader, 
          device, local_rank, dna_tokenizer, multi_dataset, curriculum_sampler, 
          world_size_from_setup, rank_from_setup) = setup_training(config)
-         
         print(f"[Rank {rank}] Training setup complete.")
 
-        # Update config runtime references
         config.deepspeed_runtime = {
             "model_engine": model_engine,
             "device": device,
@@ -94,112 +63,52 @@ def train_process(rank, world_size):
             "multi_dataset": multi_dataset,
             "curriculum_sampler": curriculum_sampler
         }
-        
-        if world_size > 1 and dist.is_initialized():
-            print(f"[Rank {rank}] Synchronizing processes...")
-            dist.barrier()
 
         print(f"[Rank {rank}] Starting training: {config.training.num_epochs} epochs")
-
         train_model(config)
-        
         print(f"[Rank {rank}] ✅ Training completed successfully!")
 
     except Exception as e:
-        # Clean error message
-        print(f"\n[Rank {rank}] ❌ Exception during training:")
+        print(f"[Rank {rank}] ❌ Exception during training:")
         print(f"[Rank {rank}] Error: {str(e)}")
-        print(f"[Rank {rank}] Full traceback:\n{traceback.format_exc()}")
-
-        # Attempt WANDB logging
-        try:
-            if wandb.run is not None:
-                wandb.log({
-                    "error_message": str(e),
-                    "error_traceback": traceback.format_exc(),
-                    "rank": rank
-                })
-                wandb.finish(exit_code=1)
-        except Exception as wandb_error:
-            print(f"[Rank {rank}] ⚠️ Failed to log to wandb: {wandb_error}")
-
-        # Flush any pending stdout/stderr (important for multi-GPU clusters)
-        try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-        except:
-            pass
-
-        # Always re-raise the original exception
+        print(f"[Rank {rank}] Full traceback:")
+        traceback.print_exc()
         raise
 
-    finally:
-        # Final distributed cleanup
-        if world_size > 1:
-            try:
-                cleanup()
-                print(f"[Rank {rank}] ✅ Cleanup successful.")
-            except Exception as cleanup_error:
-                print(f"[Rank {rank}] ⚠️ Cleanup warning: {cleanup_error}")
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
-
 def main():
-    """Main function to launch training."""
-    try:
-        set_seed(42)
+    set_seed(42)
+    print("🚀 DeepSNP3D Training Launcher (auto torchrun)")
+    print("=" * 50)
+    print_gpu_info()
 
-        available_gpus = count_gpus()
-        if available_gpus == 0:
-            print("No GPUs available, running on CPU")
-            world_size = 1
-        else:
-            world_size = available_gpus
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
 
-        print(f"Launching training with {world_size} {'GPU' if world_size == 1 else 'GPUs'}")
-        print(f"Available GPUs: {available_gpus}")
-        print(f"Configuration: {default_config.training.num_epochs} epochs, batch size {default_config.training.batch_size}")
+    # Only relaunch with torchrun if not already under torchrun and more than 1 GPU
+    if "LOCAL_RANK" not in os.environ and gpu_count > 1:
+        print(f"🔄 Relaunching with torchrun for {gpu_count} GPUs...")
+        cmd = [
+            "torchrun",
+            f"--nproc_per_node={gpu_count}",
+            os.path.abspath(__file__)
+        ]
+        os.execvp(cmd[0], cmd)
 
-        if world_size == 1:
-            # Single GPU/CPU mode - run directly
-            print("Starting single GPU training...")
-            train_process(0, 1)
-            print("✅ Single GPU training completed successfully")
-        else:
-            # Multi-GPU mode - use multiprocessing
-            print(f"Starting multi-GPU training with {world_size} processes...")
-            mp.spawn(
-                train_process,
-                args=(world_size,),
-                nprocs=world_size,
-                join=True
-            )
-            print("✅ Multi-GPU training completed successfully")
-
-    except Exception as e:
-        print(f"❌ Training launch failed:")
-        print(f"Error: {str(e)}")
-        print(f"Full traceback:\n{traceback.format_exc()}")
-        print("\n" + "="*50)
-        print("DEBUGGING INFO:")
-        print(f"Python version: {sys.version}")
-        print(f"PyTorch version: {torch.__version__}")
-        print(f"CUDA available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"CUDA version: {torch.version.cuda}")
-            print(f"GPU count: {torch.cuda.device_count()}")
-        print("="*50)
-        return 1
-
-    print("🎉 Training pipeline completed successfully!")
-    return 0
+    # If running under torchrun or single GPU, proceed as normal
+    if gpu_count == 0:
+        print("❌ No CUDA GPUs detected. Exiting.")
+        sys.exit(1)
+    elif gpu_count == 1 or "LOCAL_RANK" not in os.environ:
+        print("✅ Single GPU detected or not under torchrun. Running in single process mode.")
+        os.environ["LOCAL_RANK"] = "0"
+        os.environ["RANK"] = "0"
+        os.environ["WORLD_SIZE"] = "1"
+        train_process_torchrun(0, 1, 0)
+    else:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        rank = int(os.environ['RANK'])
+        print(f"✅ Launched by torchrun - Rank {rank}, Local Rank {local_rank}, World Size {world_size}")
+        train_process_torchrun(rank, world_size, local_rank)
 
 if __name__ == "__main__":
-    exit_code = main()
-    if exit_code == 0:
-        print("Script finished successfully")
-    else:
-        print(f"Script failed with exit code: {exit_code}")
-    sys.exit(exit_code)
-
+    main()

@@ -109,7 +109,7 @@ def train_model(config=None):
             shuffle=False,         
             pin_memory=True,
             collate_fn=collate_fn,
-            num_workers=0,  # Keep 0 for DeepSpeed compatibility
+            num_workers=0,  
             drop_last=True
         )
 
@@ -384,8 +384,9 @@ def train_model(config=None):
                     wandb.log({f'gradients/{name}': mean_grad, 'training/step': global_step})
 
             global_step += 1
-            total_loss += loss.detach().item()        # === Validation & evaluation ===
-        # test_loader is already created in setup_training
+            total_loss += loss.detach().item()        
+            
+        # === Validation & evaluation ===
         eval_metrics = evaluate(model_engine.module, test_loader, device)
         
         # Log validation metrics to wandb (only on rank 0)

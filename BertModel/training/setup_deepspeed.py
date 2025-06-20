@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModel, BertConfig
+import torch.distributed as dist
 
 # Add parent directories to Python path for absolute imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -30,31 +31,22 @@ def setup_training(config):
     Prepares the model, optimizer, scheduler, dataloaders, device, and ranks.
     Initializes DeepSpeed model engine with proper configuration.
     """
-      # Initialize distributed training if not already done
-    if not torch.distributed.is_initialized():
-        # Get local rank from environment or use -1 for single GPU
-        local_rank = int(os.environ.get('LOCAL_RANK', -1))
-        
-        if local_rank == -1:
-            # Single GPU mode
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            if torch.cuda.is_available():
-                torch.cuda.set_device(0)
-                local_rank = 0
-            world_size = 1
-            rank = 0
-        else:
-            # Multi-GPU case - initialize distributed
-            deepspeed.init_distributed()
-            device = torch.device(f'cuda:{local_rank}')
-            torch.cuda.set_device(local_rank)
-            world_size = torch.distributed.get_world_size()
-            rank = torch.distributed.get_rank()
-    else:
-        local_rank = torch.distributed.get_rank()
+    # Get distributed info from environment variables (set by launcher or main process)
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    world_size = int(os.environ.get('WORLD_SIZE', 1))
+    rank = int(os.environ.get('RANK', 0))
+    
+    # Set device based on local rank
+    if torch.cuda.is_available():
         device = torch.device(f'cuda:{local_rank}')
-        world_size = torch.distributed.get_world_size()
-        rank = torch.distributed.get_rank()
+        torch.cuda.set_device(local_rank)
+    else:
+        device = torch.device('cpu')
+    
+    if local_rank <= 0:
+        print(f"🔧 Setup training - Rank: {rank}, Local Rank: {local_rank}, World Size: {world_size}")
+        print(f"🔧 Device: {device}")
+    
     
 
     # === DATA LOADING SETUP  ===
@@ -102,9 +94,8 @@ def setup_training(config):
         batch_size=config.training.batch_size, 
         shuffle=False,
         pin_memory=config.data.pin_memory, 
-        num_workers=config.data.num_workers,
-        persistent_workers=config.data.persistent_workers and config.data.num_workers > 0,
-        collate_fn=collate_fn
+        num_workers= 0,
+        collate_fn=collate_fn,
     )
 
     # === LOCAL DNABERT-2 SETUP ===
@@ -122,20 +113,19 @@ def setup_training(config):
     if not weights_exist:
         if local_rank <= 0:
             print(f"🔄 Model weights not found locally. Downloading from {hf_model_name}...")
-        download_model_weights(hf_model_name, local_path, local_rank)
-        if world_size > 1:
-            torch.distributed.barrier()
+            download_model_weights(hf_model_name, local_path, local_rank)
+
     else:
         if local_rank <= 0:
             print(f"✅ Model weights found locally at {local_path}")
-        if world_size > 1:
-            torch.distributed.barrier()
+
 
     # Load tokenizer and model configuration
     dna_tokenizer = AutoTokenizer.from_pretrained(local_path, trust_remote_code=True)
     bert_config = BertConfig.from_pretrained(local_path)
 
     # Step 1: Load local model architecture
+    print(f"🔍 Loading model architecture from {local_path}...")
     base_model = AutoModel.from_pretrained(
         local_path,
         config=bert_config,
@@ -152,13 +142,15 @@ def setup_training(config):
     )
     
     # Initialize DeepSpeed model engine
-    model_engine, optimizer, train_dataloader, scheduler = deepspeed.initialize(
+    print("🔧 Initializing DeepSpeed model engine...")
+    model_engine, optimizer, _, scheduler = deepspeed.initialize(
         model=model,
         config=ds_config,
         model_parameters=model.parameters()
     )
 
     # Create curriculum sampler for training with multi-GPU support
+    print("🔧 Setting up curriculum sampler...")
     curriculum_sampler = CurriculumSampler(
         dataset=dataset,
         start_ratio=0.5,  # Start with balanced distribution
