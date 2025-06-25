@@ -1,4 +1,3 @@
-torch 
 deepspeed
 transformers
 wandb
@@ -9,5 +8,6 @@ scikit-learn
 pandas
 datasets
 accelerate
+https://huggingface.co/orrzxz/flash-attention-linux-WSL-cu128-wheel/resolve/main/flash_attn-2.7.4.post1-cp311-cp311-linux_x86_64.whl
 
 

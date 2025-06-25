@@ -33,7 +33,7 @@ DeepSNP leverages the state-of-the-art DNABERT-2 model (117M parameters) for mul
 ### Prerequisites
 - Python 3.8+
 - CUDA-compatible GPU(s)
-- 8GB+ GPU memory recommended
+- pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 ### Installation
 1. Clone the repository:
@@ -60,6 +60,13 @@ DeepSNP leverages the state-of-the-art DNABERT-2 model (117M parameters) for mul
    git reset --soft HEAD~2
    git reset HEAD .
    ```
+
+4. Send Data:
+```Bash
+runpodctl config --apiKey rpa_SOO146XCJMOTK6HOLXTJ9WLU7YPG2I3V17BVNXBFxhdz9x
+runpodctl send DeepSNP3D.pth
+./runpodctl.exe receive
+```
 
 
 ### Training
